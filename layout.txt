@@ -1,0 +1,113 @@
+/
+	# the root, managed by the dispatcher - the rootfs will be the procalike subclass that emulates ::async::inmemory
+	# $api is POE::API::Peek object
+	# $poe_kernel is POE::Kernel object
+
+/perl
+	# place for generic perl data
+
+	binary		# $^X
+	version		# $^V
+	pid		# $$
+	script		# $0
+	osname		# $^O
+	starttime	# $^T
+
+	inc		# dumps the @inc array
+
+	/env
+		# dumps the %ENV hash
+
+		PWD	# data is $ENV{PWD}
+		...
+
+	/modules
+		# lists all loaded modules
+
+		/Foo-Bar
+			# module name will be converted to above format
+
+			version		# $module->VERSION // 'UNKNOWN'
+			path		# module's path in %INC
+			memory_size	# module memory usage from Devel::Size( $module )
+
+/kernel
+	# place for kernel stuff
+
+	id		# $poe_kernel->ID
+	is_running	# $api->is_kernel_running
+	which_loop	# $poe_kernel->poe_kernel_loop
+	safe_signals	# $api->get_safe_signals
+	
+	active_session	# $poe_kernel->get_active_session->ID
+	active_event	# $poe_kernel->get_active_event
+	
+	memory_size	# $api->kernel_memory_size
+	session_count	# $api->session_count - 1
+	extref_count	# $api->extref_count
+	handle_count	# $api->handle_count
+	event_count	# $poe_kernel->get_event_count
+	next_event	# $poe_kernel->get_next_event_time
+
+	/statistics
+		# stats gathered via TRACE_STATISTICS
+
+		blocked
+		blocked_seconds
+		idle_seconds
+		interval
+		total_duration
+		user_events
+		user_seconds
+
+		avg_blocked
+		avg_blocked_seconds
+		avg_idle_seconds
+		avg_interval
+		avg_total_duration
+		avg_user_events
+		avg_user_seconds
+
+	/eventqueue
+		# a place for the event queue data ( basically a dump of POE::Queue::Array ) - from $api->event_queue_dump()
+
+		/N
+			# N is the position of event in the queue
+
+			id
+			index
+			priority
+			event
+			source
+			destination
+			type		
+
+	/sessions
+		# place for all session info ( like /proc/pid ) - from $api->session_list
+
+		/id
+			# the id is the session ID
+			
+			id		# $session->ID
+			type		# ref( $session )
+			memory_size	# $api->session_memory_size( $session )
+			extref_count	# $api->get_session_extref_count( $session )
+			handle_count	# $api->session_handle_count( $session )
+			
+			events_to	# $api->event_count_to( $session )
+			events_from	# $api->event_count_from( $session )
+
+			watched_signals	# $api->signals_watched_by_session( $session )
+			events		# $api->session_event_list( $session )
+			aliases		# $api->session_alias_list( $session )
+
+/modules
+	# place for modules to dump their info ( those who are aware of poe-devel-procalike )
+	
+	/poe-component-server-simplehttp
+		# module name will be converted to above format
+		# allowed only one object per module, they can stuff any data they want in their area
+
+/misc
+	# user data that was added, limited to one object
+

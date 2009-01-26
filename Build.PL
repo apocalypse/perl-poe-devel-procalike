@@ -28,15 +28,13 @@ my $build = Module::Build->new(
 		'POE'				=> 0,
 		'POE::Session::AttributeBased'	=> 0,
 
-		# FIXME POE stuff that Test::Dependencies needs to see
-		'POE::Session'			=> 0,
-		'POE::Wheel::Run'		=> 0,
-		'POE::Filter::Reference'	=> 0,
-
 		# our FUSE stuff
 		'POE::Component::Fuse'			=> '0.02',
-		'Filesys::Virtual::Async::inMemory'	=> 0,
 		'POE::Component::AIO'			=> 0,
+
+		# the FsV objects
+		'Filesys::Virtual::Async::inMemory'	=> 0,
+		'Filesys::Virtual::Async::Dispatcher'	=> 0,
 	},
 
 	# FIXME wishlist...

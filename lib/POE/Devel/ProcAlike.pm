@@ -13,11 +13,30 @@ use base 'POE::Session::AttributeBased';
 
 # load our modules to manage the filesystem
 use Filesys::Virtual::Async::Dispatcher;
-use POE::Devel::ProcAlike::Kernel;
+use Filesys::Virtual::Async::inMemory;
+use POE::Devel::ProcAlike::POEInfo;
+use POE::Devel::ProcAlike::PerlInfo;
+use POE::Devel::ProcAlike::ModuleInfo;
+
+# portability...
+use File::Spec;
+
+# Set some constants
+BEGIN {
+	if ( ! defined &DEBUG ) { *DEBUG = sub () { 0 } }
+}
 
 # starts the component!
 sub spawn {
 	my $class = shift;
+
+	# are we already created?
+	if ( $poe_kernel->alias_resolve( 'poe-devel-procalike' ) ) {
+		if ( DEBUG ) {
+			warn "Calling " . __PACKAGE__ . "->spawn() multiple times will only result in a singleton!";
+		}
+		return 1;
+	}
 
 	# The options hash
 	my %opt;
@@ -38,18 +57,6 @@ sub spawn {
 	# lowercase keys
 	%opt = map { lc($_) => $opt{$_} } keys %opt;
 
-	# Get the session alias
-	if ( ! exists $opt{'alias'} or ! defined $opt{'alias'} ) {
-		if ( DEBUG ) {
-			warn 'Using default ALIAS = procalike';
-		}
-
-		# Set the default
-		$opt{'alias'} = 'procalike';
-	} else {
-		# TODO validate for sanity
-	}
-
 	# setup the FUSE mount options
 	if ( ! exists $opt{'fuseopts'} or ! defined $opt{'fuseopts'} ) {
 		if ( DEBUG ) {
@@ -62,12 +69,41 @@ sub spawn {
 		# TODO validate for sanity
 	}
 
+	# setup the user-supplied "misc" fsv object
+	if ( ! exists $opt{'vfilesys'} or ! defined $opt{'vfilesys'} ) {
+		if ( DEBUG ) {
+			warn 'Using default VFILESYS = undef';
+		}
+
+		# Set the default
+		$opt{'vfilesys'} = undef;
+	} else {
+		# make sure it's a real object
+		if ( ! ref $opt{'vfilesys'} ) {
+			warn 'The passed-in vfilesys option is not an object';
+			return 0;
+		} else {
+			if ( ! $opt{'vfilesys'}->isa( 'Filesys::Virtual::Async' ) ) {
+				warn 'The passed-in vfilesys object is not a subclass of Filesys::Virtual::Async';
+				return 0;
+			}
+		}
+	}
+
 	# Create our session
 	POE::Session->create(
 		__PACKAGE__->inline_states(),
 		'heap'	=>	{
-			'ALIAS'		=> $opt{'alias'},
+			'ALIAS'		=> 'poe-devel-procalike',
 			'FUSEOPTS'	=> $opt{'fuseopts'},
+
+			# our filesystem objects
+			'DISPATCHER'	=> undef,
+			'ROOTFS'	=> undef,
+			'PERLFS'	=> POE::Devel::ProcAlike::PerlInfo->new(),
+			'POEFS'		=> POE::Devel::ProcAlike::POEInfo->new(),
+			'MODULEFS'	=> POE::Devel::ProcAlike::ModuleInfo->new(),
+			'MISCFS'	=> $opt{'vfilesys'},
 		},
 	);
 
@@ -84,6 +120,56 @@ sub _start : State {
 	# Set up the alias for ourself
 	$_[KERNEL]->alias_set( $_[HEAP]->{'ALIAS'} );
 
+	# create the root filesystem for use in the Dispatcher
+	my $filesystem = {
+		File::Spec->rootdir()	=> {
+			'mode'	=> => oct( '040755' ),
+			'ctime'	=> time(),
+		},
+		File::Spec->catdir( File::Spec->rootdir(), 'perl' ) => {
+			'mode'	=> => oct( '040755' ),
+			'ctime'	=> time(),
+		},
+		File::Spec->catdir( File::Spec->rootdir(), 'kernel' ) => {
+			'mode'	=> => oct( '040755' ),
+			'ctime'	=> time(),
+		},
+		File::Spec->catdir( File::Spec->rootdir(), 'modules' ) => {
+			'mode'	=> => oct( '040755' ),
+			'ctime'	=> time(),
+		},
+		File::Spec->catdir( File::Spec->rootdir(), 'misc' ) => {
+			'mode'	=> => oct( '040755' ),
+			'ctime'	=> time(),
+		},
+	};
+	$_[HEAP]->{'ROOTFS'} = Filesys::Virtual::Async::inMemory->new(
+		'filesystem'	=> $filesystem,
+		'readonly'	=> 1,
+	);
+
+	# finally, tie them all together in the dispatcher!
+	$_[HEAP]->{'DISPATCHER'} = Filesys::Virtual::Async::Dispatcher->new(
+		'rootfs'	=> $_[HEAP]->{'ROOTFS'},
+	);
+	$_[HEAP]->{'DISPATCHER'}->mount( File::Spec->catdir( File::Spec->rootdir(), 'perl' ), $_[HEAP]->{'PERLFS'} );
+	$_[HEAP]->{'DISPATCHER'}->mount( File::Spec->catdir( File::Spec->rootdir(), 'kernel' ), $_[HEAP]->{'POEFS'} );
+	$_[HEAP]->{'DISPATCHER'}->mount( File::Spec->catdir( File::Spec->rootdir(), 'modules' ), $_[HEAP]->{'MODULEFS'} );
+	if ( defined $_[HEAP]->{'MISCFS'} ) {
+		$_[HEAP]->{'DISPATCHER'}->mount( File::Spec->catdir( File::Spec->rootdir(), 'misc' ), $_[HEAP]->{'MISCFS'} );
+	}
+
+	# spawn the fuse poco
+	POE::Component::Fuse->spawn(
+		'umount'	=> 1,
+		'mkdir'		=> 1,
+		( defined $_[HEAP]->{'FUSEOPTS'} ? %{ $_[HEAP]->{'FUSEOPTS'} } : () ),
+
+		# make sure the user cannot override those options
+		'alias'		=> $_[HEAP]->{'ALIAS'} . '-fuse',
+		'vfilesys'	=> $_[HEAP]->{'DISPATCHER'},
+	);
+
 	return;
 }
 
@@ -93,13 +179,22 @@ sub _stop : State {
 		warn 'Stopping alias "' . $_[HEAP]->{'ALIAS'} . '"';
 	}
 
-	# FIXME tell poco-fuse to shutdown?
+	return;
+}
+
+sub shutdown : State {
+	# cleanup some stuff
+	$_[KERNEL]->alias_remove( $_[HEAP]->{'ALIAS'} );
+
+	# tell poco-fuse to shutdown
+	$_[KERNEL]->post( $_[HEAP]->{'ALIAS'} . '-fuse', 'shutdown' );
 
 	return;
 }
 
 1;
 __END__
+
 =head1 NAME
 
 POE::Devel::ProcAlike - Exposing the guts of POE via FUSE
@@ -111,7 +206,7 @@ POE::Devel::ProcAlike - Exposing the guts of POE via FUSE
 	use POE::Devel::ProcAlike;
 	use POE;
 
-	# load the FUSE stuff
+	# let it do the work!
 	POE::Devel::ProcAlike->spawn();
 
 	# create our own "fake" session
@@ -136,172 +231,110 @@ POE::Devel::ProcAlike - Exposing the guts of POE via FUSE
 
 =head1 ABSTRACT
 
-Using this module will enable you to asynchronously process FUSE requests from the kernel in POE. Think of
-this module as a simple wrapper around L<Fuse> to POEify it.
+Using this module will let you expose the guts of a running POE program to the filesystem via FUSE. This also
+includes a lot of debugging information about the running perl process :)
 
 =head1 DESCRIPTION
 
-This module allows you to use FUSE filesystems in POE. Basically, it is a wrapper around L<Fuse> and exposes
-it's API via events. Furthermore, you can use L<Filesys::Virtual> to handle the filesystem.
+Really, all you have to do is load the module and call it's spawn() method:
 
-The standard way to use this module is to do this:
+	use POE::Devel::ProcAlike;
+	POE::Devel::ProcAlike->spawn( ... );
 
-	use POE;
-	use POE::Component::Fuse;
-
-	POE::Component::Fuse->spawn( ... );
-
-	POE::Session->create( ... );
-
-	POE::Kernel->run();
-
-Naturally, the best way to quickly get up to speed is to study other implementations of FUSE to see what
-they have done. Furthermore, please look at the scripts in the examples/ directory in the tarball!
-
-=head2 Starting Fuse
-
-To start Fuse, just call it's spawn method:
-
-	POE::Component::Fuse->spawn( ... );
-
-This method will return failure on errors or return success.
-
-NOTE: The act of starting/stopping PoCo-Fuse fires off _child events, read the POE documentation on
-what to do with them :)
+This method will return failure on errors or return success. Normally you don't need to pass any arguments to it,
+but if you want to do zany things, you can! Note: the spawn() method will construct a singleton.
 
 This constructor accepts either a hashref or a hash, valid options are:
 
-=head3 alias
+=head3 fuseopts
 
-This sets the session alias in POE.
-
-The default is: "fuse"
-
-=head3 mount
-
-This sets the mountpoint for FUSE.
-
-If this mountpoint doesn't exist ( and the "mkdir" option isn't set ) spawn() will return failure.
-
-The default is: "/tmp/poefuse"
-
-=head3 mountoptions
-
-This passes the options to FUSE for mounting.
-
-NOTE: this is a comma-separated string!
+This is a hashref of options to pass to the underlying FUSE component, L<POE::Component::Fuse>'s spawn() method. Useful
+to change the default mountpoint, for example.
 
 The default is: undef
 
-=head3 mkdir
-
-If true, PoCo-Fuse will attempt to mkdir the mountpoint if it doesn't exist.
-
-If the mkdir attempt fails, spawn() will return failure.
-
-The default is: false
-
-=head3 umount
-
-If true, PoCo-Fuse will attempt to umount the filesystem on exit/shutdown.
-
-This basically calls "fusermount -u -z $mountpoint"
-
-WARNING: This is not exactly portable and is in the testing stage. Feedback would be much appreciated!
-
-The default is: false
-
-=head3 prefix
-
-The prefix for all events generated by this module when using the "session" method.
-
-The default is: "fuse_"
-
-=head3 session
-
-The session to send all FUSE events to. Used in conjunction with the "prefix" option, you can control
-where the events arrive.
-
-If this option is missing ( or POE is not running ) and "vfilesys" isn't enabled spawn() will return failure.
-
-NOTE: You cannot use this and "vfilesys" at the same time! PoCo-Fuse will pick vfilesys over this!
-
-The default is: calling session ( if POE is running )
-
 =head3 vfilesys
 
-The L<Filesys::Virtual> object to use as our filesystem. PoCo-Fuse will proceed to use L<Fuse::Filesys::Virtual>
-to wrap around it and process the events internally.
+This is a L<Filesys::Virtual::Async> subclass object you can provide to expose your own data in the filesystem. It
+will be mounted under /misc in the directory.
 
-Furthermore, you can also use L<Filesys::Virtual::Async> subclasses, this module understands their callback API
-and will process it properly!
-
-If this option is missing and "session" isn't enabled spawn() will return failure.
-
-NOTE: You cannot use this and "session" at the same time! PoCo-Fuse will pick this over session!
-
-Compatibility has not been tested with all Filesys::Virtual::XYZ subclasses, so please let me know if some isn't
-working properly!
-
-The default is: not used
+The default is: undef
 
 =head2 Commands
 
-There is only one command you can use, because this module does nothing except process FUSE events.
+There is only a few commands you can use, because this module does nothing except export the data to the filesystem.
+
+This module uses a static alias: "poe-devel-procalike" so you can always interact with it anytime it is loaded.
 
 =head3 shutdown
 
-Tells this module to kill the FUSE mount and terminates the session. Due to the semantics of FUSE, this
-will often result in a wedged filesystem. You would need to either umount it manually ( via "fusermount -u $mount" )
-or by enabling the "umount" option.
+Tells this module to shut down the underlying FUSE session and terminate itself.
 
-=head2 Events
+	$_[KERNEL]->post( 'poe-devel-procalike', 'shutdown' );
 
-If you aren't using the Filesys::Virtual interface, the FUSE api will be exposed to you in it's glory via
-events to your session. You can process them, and send the data back via the supplied postback. All the arguments
-are identical to the one in L<Fuse> so please take a good look at that module for more information!
+=head3 register
 
-The only place where this differs is the additional arguments. All events will receive 2 extra arguments in front
-of the standard FUSE args. They are the postback and context info. The postback is self-explanatory, you
-supply the return data to it and it'll fire an event back to PoCo-Fuse for processing. The context is the
-calling context received from FUSE. It is a hashref with the 3 keys in it: uid, gid, pid. It is received via
-the fuse_get_context() sub from L<Fuse>.
+( ONLY for PoCo module authors! )
 
-Remember that the events are the fuse methods with the prefix tacked on to them. A typical FUSE handler would
-look something like the example below. ( it is sugared via POE::Session::AttributeBased hah )
+Registers your L<Filesys::Virtual::Async> subclass with ProcAlike so you can expose your data in the filesystem.
 
-	sub fuse_getdir : State {
-		my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
+Note: You MUST call() this event so ProcAlike will get the proper caller() info to determine mountpath. Furthermore,
+ProcAlike only allows one registration per module!
 
-		# somehow get our data, we fake it here for instructional reasons
-		$postback->( 'foo', 'bar', 0 );
-		return;
+	$_[KERNEL]->call( 'poe-devel-procalike', 'register', $myfsv );
+
+=head3 unregister
+
+( ONLY for PoCo module authors! )
+
+Removes your registered object from the filesystem.
+
+Note: You MUST call() this event so ProcAlike will get the proper caller() info to determine mountpath.
+
+	$_[KERNEL]->call( 'poe-devel-procalike', 'unregister' );
+
+=head2 Notes for PoCo module authors
+
+You can expose your own data in any format you want! The way to do this is to create your own L<Filesys::Virtual::Async>
+object and give it to ProcAlike. Here's how I would do the logic:
+
+	my $ses = $_[KERNEL]->alias_resolve( 'poe-devel-procalike' );
+	if ( $ses ) {
+		require My::FsV;
+		my $fsv = My::FsV->new( ... );
+		$_[KERNEL]->call( $ses, 'register', $fsv );
 	}
 
-Again, pretty please read the L<Fuse> documentation for all the events you can receive. Here's the list
-as of Fuse v0.09: getattr readlink getdir mknod mkdir unlink rmdir symlink rename link chmod chown truncate
-utime open read write statfs flush release fsync setxattr getxattr listxattr removexattr.
+Keep in mind that the alias is static, and you should be executing this code in the "preferred" package. What I mean
+by this is that ProcAlike will take the info from caller() and determine the mountpoint from it. Here's an example:
 
-=head3 CLOSED
+	POE::Component::SimpleHTTP does a register, it will be mounted in:
+	/modules/poe-component-simplehttp
 
-This is a special event sent to the session notifying it of component shutdown. As usual, it will be prefixed by the
-prefix set in the options. If you are using the vfilesys option, this will not be sent anywhere.
+	My::Module::SubClass does a register, it will be mounted in:
+	/modules/my-module-subclass
 
-The event handler will get one argument, the error string. If you shut down the component, it will be "shutdown",
-otherwise it will contain some error string. A sample handler is below.
+Furthermore, ProcAlike only allows each package to register once, so you have to figure out how to create a singleton
+and use that if your PoCo has been spawned N times. The reasoning behind this is to have a "uniform" filesystem
+that would be valid across multiple invocations. If we allowed module authors to register any name, then we would
+end up with possible collisions and wacky schemes like "$pkg$ses->ID" as the name...
 
-	sub fuse_CLOSED : State {
-		my $error = $_[ARG0];
-		if ( $error ne 'shutdown' ) {
-			print "AIEE: $error\n";
+=head2 TODO
 
-			# do some actions like emailing the sysadmin, restarting the component, etc...
-		} else {
-			# we told it to shutdown, so what do we want to do next?
-		}
+=over 4
 
-		return;
-	}
+=item * tunable parameters
+
+Various people in #poe@magnet suggested having a system where we could do "sysctl-like" stuff with this filesystem.
+I'm not entirely sure what we can "tune" in regards to POE but if you have any ideas please feel free to drop them
+my way and we'll see what we can do :)
+
+=item * pipe support
+
+Again, people suggested the idea of "telnetting" into the filesystem via a pipe. The interface could be something
+like PoCo-DebugShell, and we could expand it to accept zany commands :)
+
+=back
 
 =head1 EXPORT
 

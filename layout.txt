@@ -8,7 +8,7 @@
 
 	binary		# $^X
 	version		# $^V
-	pid		# $$
+	pid			# $$
 	script		# $0
 	osname		# $^O
 	starttime	# $^T
@@ -34,23 +34,23 @@
 /kernel
 	# place for kernel stuff
 
-	id		# $poe_kernel->ID
-	is_running	# $api->is_kernel_running
-	which_loop	# $poe_kernel->poe_kernel_loop
+	id				# $poe_kernel->ID
+	is_running		# $api->is_kernel_running
+	which_loop		# $poe_kernel->poe_kernel_loop
 	safe_signals	# $api->get_safe_signals
-	
+
 	active_session	# $poe_kernel->get_active_session->ID
 	active_event	# $poe_kernel->get_active_event
-	
-	memory_size	# $api->kernel_memory_size
+
+	memory_size		# $api->kernel_memory_size
 	session_count	# $api->session_count - 1
 	extref_count	# $api->extref_count
 	handle_count	# $api->handle_count
-	event_count	# $poe_kernel->get_event_count
-	next_event	# $poe_kernel->get_next_event_time
+	event_count		# $poe_kernel->get_event_count
+	next_event		# $poe_kernel->get_next_event_time
 
 	/statistics
-		# stats gathered via TRACE_STATISTICS
+		# stats gathered via TRACE_STATISTICS if available
 
 		blocked
 		blocked_seconds
@@ -80,30 +80,32 @@
 			event
 			source
 			destination
-			type		
+			type
 
 	/sessions
 		# place for all session info ( like /proc/pid ) - from $api->session_list
 
 		/id
 			# the id is the session ID
-			
-			id		# $session->ID
-			type		# ref( $session )
-			memory_size	# $api->session_memory_size( $session )
+
+			id				# $session->ID
+			type			# ref( $session )
+			memory_size		# $api->session_memory_size( $session )
 			extref_count	# $api->get_session_extref_count( $session )
 			handle_count	# $api->session_handle_count( $session )
-			
-			events_to	# $api->event_count_to( $session )
-			events_from	# $api->event_count_from( $session )
+
+			events_to		# $api->event_count_to( $session )
+			events_from		# $api->event_count_from( $session )
 
 			watched_signals	# $api->signals_watched_by_session( $session )
-			events		# $api->session_event_list( $session )
-			aliases		# $api->session_alias_list( $session )
+			events			# $api->session_event_list( $session )
+			aliases			# $api->session_alias_list( $session )
+
+			heap			# Data::Dumper( $session->get_heap() )
 
 /modules
 	# place for modules to dump their info ( those who are aware of poe-devel-procalike )
-	
+
 	/poe-component-server-simplehttp
 		# module name will be converted to above format
 		# allowed only one object per module, they can stuff any data they want in their area

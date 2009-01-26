@@ -26,3 +26,6 @@
 
 # our tarballs
 \.tar\.gz$
+
+# misc stuff
+layout.txt

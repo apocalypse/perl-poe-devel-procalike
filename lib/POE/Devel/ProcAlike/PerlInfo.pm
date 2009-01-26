@@ -43,7 +43,7 @@ sub new {
 #		/Foo-Bar
 #			# module name will be converted to above format
 #
-#			version		# $module->VERSION // 'UNDEF'
+#			version		# $module->VERSION ||= 'UNDEF'
 #			path		# module's path in %INC
 my %fs = (
 	'binary'	=> $^X,

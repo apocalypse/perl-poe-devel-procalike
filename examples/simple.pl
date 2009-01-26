@@ -1,9 +1,12 @@
 #!/usr/bin/perl
 use strict; use warnings;
-use POE::Devel::ProcAlike;
 use POE;
 
-# load the FUSE stuff
+# uncomment this to have debugging
+sub POE::Component::Fuse::DEBUG { 1 }
+
+# load the module!
+use POE::Devel::ProcAlike;
 POE::Devel::ProcAlike->spawn();
 
 # create our own "fake" session

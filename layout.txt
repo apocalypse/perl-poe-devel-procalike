@@ -29,7 +29,7 @@
 
 			version		# $module->VERSION // 'UNKNOWN'
 			path		# module's path in %INC
-			memory_size	# module memory usage from Devel::Size( $module )
+			memory_size	# module memory usage from Devel::Size( $module ) - WISHLIST!
 
 /kernel
 	# place for kernel stuff

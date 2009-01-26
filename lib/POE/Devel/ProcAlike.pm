@@ -334,6 +334,15 @@ my way and we'll see what we can do :)
 Again, people suggested the idea of "telnetting" into the filesystem via a pipe. The interface could be something
 like PoCo-DebugShell, and we could expand it to accept zany commands :)
 
+=item * module memory usage
+
+I talked with some people, and this problem is much more complex than you would think it is. If somebody could
+let me know of a snippet that measures this, I would love to include it in the perl output!
+
+=item * more stats
+
+More stats is always welcome! If you have any ideas, please drop me a line.
+
 =back
 
 =head1 EXPORT

@@ -27,7 +27,7 @@
 		/Foo-Bar
 			# module name will be converted to above format
 
-			version		# $module->VERSION // 'UNKNOWN'
+			version		# $module->VERSION // 'UNDEF'
 			path		# module's path in %INC
 			memory_size	# module memory usage from Devel::Size( $module ) - WISHLIST!
 
@@ -43,7 +43,7 @@
 	active_event	# $poe_kernel->get_active_event
 
 	memory_size		# $api->kernel_memory_size
-	session_count	# $api->session_count - 1
+	session_count	# $api->session_count
 	extref_count	# $api->extref_count
 	handle_count	# $api->handle_count
 	event_count		# $poe_kernel->get_event_count
@@ -52,10 +52,11 @@
 	/statistics
 		# stats gathered via TRACE_STATISTICS if available
 
+		interval
+
 		blocked
 		blocked_seconds
 		idle_seconds
-		interval
 		total_duration
 		user_events
 		user_seconds
@@ -68,11 +69,16 @@
 		avg_user_events
 		avg_user_seconds
 
+		derived_idle
+		derived_user
+		derived_blocked
+		derived_userload
+
 	/eventqueue
 		# a place for the event queue data ( basically a dump of POE::Queue::Array ) - from $api->event_queue_dump()
 
 		/N
-			# N is the position of event in the queue
+			# N is the ID of event in the queue
 
 			id
 			index

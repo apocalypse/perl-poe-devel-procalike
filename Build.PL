@@ -27,6 +27,7 @@ my $build = Module::Build->new(
 		# POE Stuff
 		'POE'				=> 0,
 		'POE::Session::AttributeBased'	=> 0,
+		'POE::API::Peek'		=> 0,
 
 		# our FUSE stuff
 		'POE::Component::Fuse'			=> '0.02',

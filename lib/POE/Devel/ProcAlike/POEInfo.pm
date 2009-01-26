@@ -12,61 +12,165 @@ use base 'Filesys::Virtual::Async::inMemory';
 # portable tools
 use File::Spec;
 
+# import the useful $poe_kernel
+use POE;
+use POE::API::Peek;
+my $api = POE::API::Peek->new();
+my $have_stats = 0;
+
 sub new {
+	# do we have stats available?
+	eval { $have_stats = $poe_kernel->stat_getdata() };
+	if ( ! $@ and defined $have_stats ) {
+		$have_stats = 1;
+	}
+
 	# make sure we set a readonly filesystem!
 	return __PACKAGE__->SUPER::new(
 		'readonly'	=> 1,
 	);
 }
 
-#/perl
-#	# place for generic perl data
+#/kernel
+#	# place for kernel stuff
 #
-#	binary		# $^X
-#	version		# $^V
-#	pid		# $$
-#	script		# $0
-#	osname		# $^O
-#	starttime	# $^T
+#	id		# $poe_kernel->ID
+#	is_running	# $api->is_kernel_running
+#	which_loop	# $poe_kernel->poe_kernel_loop
+#	safe_signals	# $api->get_safe_signals
 #
-#	inc		# dumps the @inc array
+#	active_session	# $poe_kernel->get_active_session->ID
+#	active_event	# $poe_kernel->get_active_event
 #
-#	/env
-#		# dumps the %ENV hash
+#	memory_size	# $api->kernel_memory_size
+#	session_count	# $api->session_count
+#	extref_count	# $api->extref_count
+#	handle_count	# $api->handle_count
+#	event_count	# $poe_kernel->get_event_count
+#	next_event	# $poe_kernel->get_next_event_time
 #
-#		PWD	# data is $ENV{PWD}
-#		...
+#	/statistics
+#		# stats gathered via TRACE_STATISTICS if available
 #
-#	/modules
-#		# lists all loaded modules
+#		interval
 #
-#		/Foo-Bar
-#			# module name will be converted to above format
+#		blocked
+#		blocked_seconds
+#		idle_seconds
+#		total_duration
+#		user_events
+#		user_seconds
 #
-#			version		# $module->VERSION // 'UNKNOWN'
-#			path		# module's path in %INC
-#			memory_size	# module memory usage from Devel::Size( $module )
+#		avg_blocked
+#		avg_blocked_seconds
+#		avg_idle_seconds
+#		avg_total_duration
+#		avg_user_events
+#		avg_user_seconds
+#
+#		derived_idle
+#		derived_user
+#		derived_blocked
+#		derived_userload
+#
+#	/eventqueue
+#		# a place for the event queue data ( basically a dump of POE::Queue::Array ) - from $api->event_queue_dump()
+#
+#		/N
+#			# N is the ID of event in the queue
+#
+#			id
+#			index
+#			priority
+#			event
+#			source
+#			destination
+#			type
+#
+#	/sessions
+#		# place for all session info ( like /proc/pid ) - from $api->session_list
+#
+#		/id
+#			# the id is the session ID
+#
+#			id				# $session->ID
+#			type			# ref( $session )
+#			memory_size		# $api->session_memory_size( $session )
+#			extref_count	# $api->get_session_extref_count( $session )
+#			handle_count	# $api->session_handle_count( $session )
+#
+#			events_to		# $api->event_count_to( $session )
+#			events_from		# $api->event_count_from( $session )
+#
+#			watched_signals	# $api->signals_watched_by_session( $session )
+#			events			# $api->session_event_list( $session )
+#			aliases			# $api->session_alias_list( $session )
+#
+#			heap			# Data::Dumper( $session->get_heap() )
 my %fs = (
-	'binary'	=> $^X,
-	'version'	=> $^V,
-	'pid'		=> $$,
-	'script'	=> $0,
-	'osname'	=> $^O,
-	'starttime'	=> $^T,
-	'inc'		=> join( "\n", @INC ),
+	'id'			=> $poe_kernel->ID,
+	'is_running'		=> [ $api, 'is_kernel_running' ],
+	'which_loop'		=> $poe_kernel->poe_kernel_loop,
+	'safe_signals'		=> join( "\n", $api->get_safe_signals() ),
+	'active_session'	=> [ $poe_kernel, 'get_active_session', 'ID' ],
+	'active_event'		=> [ $poe_kernel, 'get_active_event' ],
+	'memory_size'		=> [ $api, 'kernel_memory_size' ],
+	'session_count'		=> [ $api, 'session_count' ],
+	'extref_count'		=> [ $api, 'extref_count' ],
+	'handle_count'		=> [ $api, 'handle_count' ],
+	'event_count'		=> [ $poe_kernel, 'get_event_count' ],
+	'next_event'		=> [ $poe_kernel, 'get_next_event_time' ],
 
-	'env'		=> \&manage_env,
+	'statistics'		=> \&manage_statistics,
 
-	'modules'	=> \&manage_modules,
+	'eventqueue'		=> \&manage_queue,
+
+	'sessions'		=> \&manage_sessions,
 );
 
-sub manage_env {
+# helper sub to keep track of stat variables
+sub _get_statistics {
+	return [ qw( blocked blocked_seconds idle_seconds interval total_duration user_events user_seconds
+		avg_blocked avg_blocked_seconds avg_idle_seconds avg_total_duration avg_user_events avg_user_seconds
+		derived_idle derived_user derived_blocked derived_userload
+	) ];
+}
+sub _get_statistics_metric {
+	my $metric = shift;
+	my %average = $poe_kernel->stat_getdata();
+
+	# derived require calculations
+	if ( $metric =~ /^derived/ ) {
+		# Division by zero sucks.
+		$average{'interval'}	||= 1;
+		$average{'user_events'}	||= 1;
+
+		if ( $metric eq 'derived_idle' ) {
+			return sprintf( "%9.1f%%", 100 * $average{'avg_idle_seconds'} / $average{'interval'} );
+		} elsif ( $metric eq 'derived_user' ) {
+			return sprintf( "%9.1f%%", 100 * $average{'avg_user_seconds'} / $average{'interval'} );
+		} elsif ( $metric eq 'derived_blocked' ) {
+			return sprintf( "%9.1f%%", 100 * $average{'avg_blocked'} / $average{'user_events'} );
+		} elsif ( $metric eq 'derived_userload' ) {
+			return sprintf( "%9.1f%%", 100 * $average{'avg_user_events'} / $average{'interval'} );
+		}
+	} else {
+		# simple hash access
+		return $average{ $metric };
+	}
+}
+
+sub manage_statistics {
 	my( $type, @path ) = @_;
 
 	# what's the operation?
 	if ( $type eq 'readdir' ) {
-		# we don't have any subdirs so simply return the entire hash!
-		return [ keys %ENV ];
+		# do we have stats?
+		if ( $have_stats ) {
+			return _get_statistics();
+		} else {
+			return [];
+		}
 	} elsif ( $type eq 'stat' ) {
 		# set some default data
 		my ($atime, $ctime, $mtime, $size, $modes);
@@ -75,13 +179,18 @@ sub manage_env {
 
 		# trying to stat the dir or stuff inside it?
 		if ( defined $path[0] ) {
-			# does it exist?
-			if ( ! exists $ENV{ $path[0] } or defined $path[1] ) {
+			# do we have stats?
+			if ( ! $have_stats ) {
+				return;
+			}
+
+			# is it a valid stat metric?
+			if ( ! grep { $_ eq $path[0] } @{ _get_statistics() } or defined $path[1] ) {
 				return;
 			}
 
 			# a file, munge the data
-			$size = length( $ENV{ $path[0] } );
+			$size = length( _get_statistics_metric( $path[0] ) );
 			$modes = oct( '100644' );
 		} else {
 			# a directory, munge the data
@@ -94,7 +203,32 @@ sub manage_env {
 		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 	} elsif ( $type eq 'open' ) {
 		# return a scalar ref
-		return \$ENV{ $path[0] };
+		my $data = _get_statistics_metric( $path[0] );
+		return \$data;
+	}
+}
+
+# helper sub to simplify queue item processing
+sub _get_queues {
+	return [ qw( id index priority event source destination type ) ];
+}
+sub _get_queue_metric {
+	my $queue_id = shift;
+}
+
+sub manage_queue {
+	my( $type, @path ) = @_;
+
+	# what's the operation?
+	if ( $type eq 'readdir' ) {
+		# trying to read the root or the queue event itself?
+		if ( defined $path[0] ) {
+			return _get_queues();
+		} else {
+			# get the queue events
+			my @queue = map { $_->{'ID'} } @{ $api->event_queue_dump() };
+			return \@queue;
+		}
 	}
 }
 

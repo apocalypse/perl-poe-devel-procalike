@@ -93,16 +93,16 @@ sub new {
 #		/id
 #			# the id is the session ID
 #
-#			id				# $session->ID
+#			id			# $session->ID
 #			type			# ref( $session )
 #			memory_size		# $api->session_memory_size( $session )
-#			extref_count	# $api->get_session_extref_count( $session )
-#			handle_count	# $api->session_handle_count( $session )
+#			extref_count		# $api->get_session_extref_count( $session )
+#			handle_count		# $api->session_handle_count( $session )
 #
 #			events_to		# $api->event_count_to( $session )
 #			events_from		# $api->event_count_from( $session )
 #
-#			watched_signals	# $api->signals_watched_by_session( $session )
+#			watched_signals		# $api->signals_watched_by_session( $session )
 #			events			# $api->session_event_list( $session )
 #			aliases			# $api->session_alias_list( $session )
 #
@@ -112,10 +112,10 @@ my %fs = (
 	'is_running'		=> [ $api, 'is_kernel_running' ],
 	'which_loop'		=> $poe_kernel->poe_kernel_loop,
 	'safe_signals'		=> join( "\n", $api->get_safe_signals() ),
-	'active_session'	=> [ $poe_kernel, 'get_active_session', 'ID' ],
+	'active_session'	=> [ $poe_kernel, 'get_active_session', sub { $_[0]->ID } ],
 	'active_event'		=> [ $poe_kernel, 'get_active_event' ],
-	'memory_size'		=> [ $api, 'kernel_memory_size' ],
-	'session_count'		=> [ $api, 'session_count' ],
+#	'memory_size'		=> [ $api, 'kernel_memory_size' ],
+	'session_count'		=> [ $api, 'session_count', sub { $_[0] - 1 } ],
 	'extref_count'		=> [ $api, 'extref_count' ],
 	'handle_count'		=> [ $api, 'handle_count' ],
 	'event_count'		=> [ $poe_kernel, 'get_event_count' ],
@@ -129,7 +129,7 @@ my %fs = (
 );
 
 # helper sub to keep track of stat variables
-sub _get_statistics {
+sub _get_statistics_metrics {
 	return [ qw( blocked blocked_seconds idle_seconds interval total_duration user_events user_seconds
 		avg_blocked avg_blocked_seconds avg_idle_seconds avg_total_duration avg_user_events avg_user_seconds
 		derived_idle derived_user derived_blocked derived_userload
@@ -167,7 +167,7 @@ sub manage_statistics {
 	if ( $type eq 'readdir' ) {
 		# do we have stats?
 		if ( $have_stats ) {
-			return _get_statistics();
+			return _get_statistics_metrics();
 		} else {
 			return [];
 		}
@@ -185,12 +185,17 @@ sub manage_statistics {
 			}
 
 			# is it a valid stat metric?
-			if ( ! grep { $_ eq $path[0] } @{ _get_statistics() } or defined $path[1] ) {
+			if ( ! grep { $_ eq $path[0] } @{ _get_statistics_metrics() } or defined $path[1] ) {
 				return;
 			}
 
 			# a file, munge the data
-			$size = length( _get_statistics_metric( $path[0] ) );
+			$size = _get_statistics_metric( $path[0] );
+			if ( defined $size ) {
+				$size = length( $size );
+			} else {
+				$size = 0;
+			}
 			$modes = oct( '100644' );
 		} else {
 			# a directory, munge the data
@@ -202,6 +207,16 @@ sub manage_statistics {
 		# finally, return the darn data!
 		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 	} elsif ( $type eq 'open' ) {
+		# do we have stats?
+		if ( ! $have_stats ) {
+			return;
+		}
+
+		# is it a valid stat metric?
+		if ( ! grep { $_ eq $path[0] } @{ _get_statistics_metrics() } or defined $path[1] ) {
+			return;
+		}
+
 		# return a scalar ref
 		my $data = _get_statistics_metric( $path[0] );
 		return \$data;
@@ -209,11 +224,22 @@ sub manage_statistics {
 }
 
 # helper sub to simplify queue item processing
-sub _get_queues {
+sub _get_queue_metrics {
 	return [ qw( id index priority event source destination type ) ];
 }
 sub _get_queue_metric {
-	my $queue_id = shift;
+	my $queuedata = shift;
+	my $metric = shift;
+
+	# some metrics require manipulation
+	if ( $metric eq 'source' or $metric eq 'destination' ) {
+		if ( ref $queuedata->{ $metric } ) {
+			return $queuedata->{ $metric }->ID;
+		}
+	}
+
+	# simple hash access
+	return $queuedata->{ $metric };
 }
 
 sub manage_queue {
@@ -223,12 +249,186 @@ sub manage_queue {
 	if ( $type eq 'readdir' ) {
 		# trying to read the root or the queue event itself?
 		if ( defined $path[0] ) {
-			return _get_queues();
+			return _get_queue_metrics();
 		} else {
 			# get the queue events
-			my @queue = map { $_->{'ID'} } @{ $api->event_queue_dump() };
+			my @queue = map { $_->{'ID'} } $api->event_queue_dump();
 			return \@queue;
 		}
+	} elsif ( $type eq 'stat' ) {
+		# set some default data
+		my ($atime, $ctime, $mtime, $size, $modes);
+		$atime = $ctime = $mtime = time();
+		my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
+
+		# get the data to start off
+		my @queue = $api->event_queue_dump();
+
+		# trying to stat the dir or stuff inside it?
+		if ( defined $path[0] ) {
+			# does the id exist?
+			my @data = grep { $_->{'ID'} eq $path[0] } @queue;
+			if ( ! @data ) {
+				return;
+			}
+
+			# trying to stat the queue id or data inside it?
+			if ( defined $path[1] ) {
+				# is it a valid queue metric?
+				if ( ! grep { $_ eq $path[1] } @{ _get_queue_metrics() } or defined $path[2] ) {
+					return;
+				}
+
+				# a file, munge the data
+				$size = length( _get_queue_metric( $data[0], $path[1] ) );
+				$modes = oct( '100644' );
+			} else {
+				# a directory, munge the data
+				$size = 0;
+				$modes = oct( '040755' );
+				$nlink = 2;
+			}
+		} else {
+			# a directory, munge the data
+			$size = 0;
+			$modes = oct( '040755' );
+			$nlink = 2 + scalar @queue;
+		}
+
+		# finally, return the darn data!
+		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
+	} elsif ( $type eq 'open' ) {
+		# get the data to start off
+		my @queue = $api->event_queue_dump();
+
+		my @data = grep { $_->{'ID'} eq $path[0] } @queue;
+		if ( ! @data or ! defined $path[1] ) {
+			return;
+		}
+
+		# is it a valid queue metric?
+		if ( ! grep { $_ eq $path[1] } @{ _get_queue_metrics() } or defined $path[2] ) {
+			return;
+		}
+
+		# get the metric!
+		my $data = _get_queue_metric( $data[0], $path[1] );
+		return \$data;
+	}
+}
+
+# helper sub to simplify session item processing
+sub _get_sessions_metrics {
+	# removed memory_size, watched_signals due to complications
+	return [ qw( id type extref_count handle_count events_to events_from
+		events aliases heap
+	) ];
+}
+sub _get_sessions_metric {
+	my $session = shift;
+	my $metric = shift;
+
+	# determine what to do
+	if ( $metric eq 'id' ) {
+		return $session->ID;
+	} elsif ( $metric eq 'type' ) {
+		return ref( $session );
+	} elsif ( $metric eq 'memory_size' ) {
+		return $api->session_memory_size( $session );
+	} elsif ( $metric eq 'extref_count' ) {
+		return $api->get_session_extref_count( $session );
+	} elsif ( $metric eq 'handle_count' ) {
+		return $api->session_handle_count( $session );
+	} elsif ( $metric eq 'events_to' ) {
+		return $api->event_count_to( $session );
+	} elsif ( $metric eq 'events_from' ) {
+		return $api->event_count_from( $session );
+	} elsif ( $metric eq 'watched_signals' ) {
+		return join( "\n", $api->signals_watched_by_session( $session ) );
+	} elsif ( $metric eq 'events' ) {
+		return join( "\n", $api->session_event_list( $session ) );
+	} elsif ( $metric eq 'aliases' ) {
+		return join( "\n", $api->session_alias_list( $session ) );
+	} elsif ( $metric eq 'heap' ) {
+		require Data::Dumper;
+		return Data::Dumper::Dumper( $session->get_heap() );
+	} else {
+		die "unknown sessions metric: $metric\n";
+	}
+}
+
+sub manage_sessions {
+	my( $type, @path ) = @_;
+
+	# what's the operation?
+	if ( $type eq 'readdir' ) {
+		# trying to read the root or the session itself?
+		if ( defined $path[0] ) {
+			return _get_sessions_metrics();
+		} else {
+			# get the sessions
+			my @sessions = map { $_->ID } $api->session_list();
+			return \@sessions;
+		}
+	} elsif ( $type eq 'stat' ) {
+		# set some default data
+		my ($atime, $ctime, $mtime, $size, $modes);
+		$atime = $ctime = $mtime = time();
+		my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
+
+		# get the data to start off
+		my @sessions = $api->session_list();
+
+		# trying to stat the dir or stuff inside it?
+		if ( defined $path[0] ) {
+			# does the id exist?
+			my @data = grep { $_->ID eq $path[0] } @sessions;
+			if ( ! @data ) {
+				return;
+			}
+
+			# trying to stat the session id or data inside it?
+			if ( defined $path[1] ) {
+				# is it a valid session metric?
+				if ( ! grep { $_ eq $path[1] } @{ _get_sessions_metrics() } or defined $path[2] ) {
+					return;
+				}
+
+				# a file, munge the data
+				$size = length( _get_sessions_metric( $data[0], $path[1] ) );
+				$modes = oct( '100644' );
+			} else {
+				# a directory, munge the data
+				$size = 0;
+				$modes = oct( '040755' );
+				$nlink = 2;
+			}
+		} else {
+			# a directory, munge the data
+			$size = 0;
+			$modes = oct( '040755' );
+			$nlink = 2 + scalar @sessions;
+		}
+
+		# finally, return the darn data!
+		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
+	} elsif ( $type eq 'open' ) {
+		# get the data to start off
+		my @sessions = $api->session_list();
+
+		my @data = grep { $_->ID eq $path[0] } @sessions;
+		if ( ! @data or ! defined $path[1] ) {
+			return;
+		}
+
+		# is it a valid session metric?
+		if ( ! grep { $_ eq $path[1] } @{ _get_sessions_metrics() } or defined $path[2] ) {
+			return;
+		}
+
+		# get the metric!
+		my $data = _get_sessions_metric( $data[0], $path[1] );
+		return \$data;
 	}
 }
 
@@ -276,6 +476,22 @@ sub _readdir {
 
 # _utime
 
+# helper to process ARRAY fs type
+sub _stat_arraymode {
+	my $file = shift;
+
+	my $method = $fs{ $file }->[1];
+	my $data = $fs{ $file }->[0]->$method();
+
+	# do we need to do more munging?
+	if ( defined $fs{ $file }->[2] ) {
+		$data = $fs{ $file }->[2]->( $data );
+	}
+
+	# all done!
+	return $data;
+}
+
 sub _stat {
 	my( $self, $path ) = @_;
 
@@ -288,7 +504,7 @@ sub _stat {
 		$modes = oct( '040755' );
 
 		# count subdirs
-		$nlink = 2 + grep { ref $fs{ $_ } } keys %fs;
+		$nlink = 2 + grep { ref $fs{ $_ } and ref( $fs{ $_ } ) ne 'ARRAY' } keys %fs;
 
 		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 	}
@@ -297,22 +513,29 @@ sub _stat {
 	my @dirs = File::Spec->splitdir( $path );
 	shift( @dirs ); # get rid of the root entry which is always '' for me
 	if ( exists $fs{ $dirs[0] } ) {
+		# arg, stat is a finicky beast!
+		my $modes = oct( '100644' );
+		my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
+		my ($atime, $ctime, $mtime, $size);
+		$atime = $ctime = $mtime = time();
+
 		# directory or file?
 		if ( ref $fs{ $dirs[0] } ) {
-			# trying to stat the dir or the subpath?
-			return $fs{ $dirs[0] }->( 'stat', @dirs[ 1 .. $#dirs ] );
+			# array or code?
+			if ( ref( $fs{ $dirs[0] } ) eq 'ARRAY' ) {
+				# array operation, do what the data tells us to do!
+				$size = length( _stat_arraymode( $dirs[0] ) );
+			} else {
+				# trying to stat the dir or the subpath?
+				return $fs{ $dirs[0] }->( 'stat', @dirs[ 1 .. $#dirs ] );
+			}
 		} else {
 			# arg, stat is a finicky beast!
-			my $size = length( $fs{ $dirs[0] } );
-			my $modes = oct( '100644' );
-
-			my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
-			my ($atime, $ctime, $mtime);
-			$atime = $ctime = $mtime = time();
-
-			# finally, return the darn data!
-			return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
+			$size = length( $fs{ $dirs[0] } );
 		}
+
+		# finally, return the darn data!
+		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 	} else {
 		return;
 	}
@@ -329,7 +552,14 @@ sub _open {
 	if ( exists $fs{ $dirs[0] } ) {
 		# directory or file?
 		if ( ref $fs{ $dirs[0] } ) {
-			return $fs{ $dirs[0] }->( 'open', @dirs[ 1 .. $#dirs ] );
+			# array or code?
+			if ( ref( $fs{ $dirs[0] } ) eq 'ARRAY' ) {
+				# array operation, do what the data tells us to do!
+				my $data = _stat_arraymode( $dirs[0] );
+				return \$data;
+			} else {
+				return $fs{ $dirs[0] }->( 'open', @dirs[ 1 .. $#dirs ] );
+			}
 		} else {
 			# return a scalar ref
 			return \$fs{ $dirs[0] };

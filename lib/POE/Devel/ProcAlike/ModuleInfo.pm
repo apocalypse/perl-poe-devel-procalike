@@ -19,84 +19,15 @@ sub new {
 	);
 }
 
-#/perl
-#	# place for generic perl data
+#/modules
+#	# place for modules to dump their info ( those who are aware of poe-devel-procalike )
 #
-#	binary		# $^X
-#	version		# $^V
-#	pid		# $$
-#	script		# $0
-#	osname		# $^O
-#	starttime	# $^T
-#
-#	inc		# dumps the @inc array
-#
-#	/env
-#		# dumps the %ENV hash
-#
-#		PWD	# data is $ENV{PWD}
-#		...
-#
-#	/modules
-#		# lists all loaded modules
-#
-#		/Foo-Bar
-#			# module name will be converted to above format
-#
-#			version		# $module->VERSION // 'UNKNOWN'
-#			path		# module's path in %INC
-#			memory_size	# module memory usage from Devel::Size( $module )
+#	/poe-component-server-simplehttp
+#		# module name will be converted to above format
+#		# allowed only one object per module, they can stuff any data they want in their area
 my %fs = (
-	'binary'	=> $^X,
-	'version'	=> $^V,
-	'pid'		=> $$,
-	'script'	=> $0,
-	'osname'	=> $^O,
-	'starttime'	=> $^T,
-	'inc'		=> join( "\n", @INC ),
-
-	'env'		=> \&manage_env,
-
-	'modules'	=> \&manage_modules,
+	# start with no modules loaded
 );
-
-sub manage_env {
-	my( $type, @path ) = @_;
-
-	# what's the operation?
-	if ( $type eq 'readdir' ) {
-		# we don't have any subdirs so simply return the entire hash!
-		return [ keys %ENV ];
-	} elsif ( $type eq 'stat' ) {
-		# set some default data
-		my ($atime, $ctime, $mtime, $size, $modes);
-		$atime = $ctime = $mtime = time();
-		my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
-
-		# trying to stat the dir or stuff inside it?
-		if ( defined $path[0] ) {
-			# does it exist?
-			if ( ! exists $ENV{ $path[0] } or defined $path[1] ) {
-				return;
-			}
-
-			# a file, munge the data
-			$size = length( $ENV{ $path[0] } );
-			$modes = oct( '100644' );
-		} else {
-			# a directory, munge the data
-			$size = 0;
-			$modes = oct( '040755' );
-			$nlink = 2;
-		}
-
-		# finally, return the darn data!
-		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
-	} elsif ( $type eq 'open' ) {
-		# return a scalar ref
-		return \$ENV{ $path[0] };
-	}
-}
 
 # we cheat here and not implement a lot of stuff because we know the FUSE api never calls the "extra" APIs
 # that ::Async provides. Furthermore, this is a read-only filesystem so we can skip even more APIs :)
@@ -210,7 +141,7 @@ __END__
 
 =head1 NAME
 
-POE::Devel::ProcAlike::ModuleInfo - Manages the module data in ProcAlike
+POE::Devel::ProcAlike::ModuleInfo - Manages the PoCo module data in ProcAlike
 
 =head1 SYNOPSIS
 
@@ -222,7 +153,7 @@ Please do not use this module directly.
 
 =head1 DESCRIPTION
 
-This module is responsible for exporting the module data in ProcAlike.
+This module is responsible for exporting the PoCo module data in ProcAlike.
 
 =head1 EXPORT
 

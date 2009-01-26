@@ -12,9 +12,6 @@ use base 'Filesys::Virtual::Async::inMemory';
 # portable tools
 use File::Spec;
 
-# figure out memory size
-use Devel::Size qw( total_size );
-
 sub new {
 	# make sure we set a readonly filesystem!
 	return __PACKAGE__->SUPER::new(
@@ -70,6 +67,31 @@ sub _get_loadedmodules {
 	return \@list;
 }
 
+sub _get_module_metrics {
+	return [ qw( version path ) ];
+}
+
+sub _get_module_metric {
+	my $incpath = shift;
+	my $module = shift;
+	my $metric = shift;
+
+	# what metric?
+	if ( $metric eq 'version' ) {
+		my $size = join( '::', split( '-', $module ) );
+		$size = eval "$size->VERSION";
+		if ( defined $size ) {
+			return $size;
+		} else {
+			return 'UNDEF';
+		}
+	} elsif ( $metric eq 'path' ) {
+		return $INC{ $incpath };
+	} else {
+		die "unknown module metric: $metric\n";
+	}
+}
+
 sub manage_modules {
 	my( $type, @path ) = @_;
 
@@ -78,7 +100,7 @@ sub manage_modules {
 		# trying to read the root or the module itself?
 		if ( defined $path[0] ) {
 			# shortcut, because we always know what's in the module dir
-			return [ 'version', 'path' ];
+			return _get_module_metrics();
 		} else {
 			# list all loaded modules
 			return _get_loadedmodules();
@@ -101,22 +123,15 @@ sub manage_modules {
 
 			# trying to stat the module or data inside it?
 			if ( defined $path[1] ) {
-				$modes = oct( '100644' );
-
-				# stating what file?
-				if ( $path[1] eq 'version' ) {
-					$size = join( '::', split( '-', $path[0] ) );
-					eval "$size = $size->VERSION";
-					if ( defined $size ) {
-						$size = length( $size );
-					} else {
-						$size = length( 'UNDEF' );
-					}
-				} elsif ( $path[1] eq 'path' ) {
-					$size = length( $INC{ $incpath } );
-				} else {
+				# valid filename?
+				if ( ! grep { $_ eq $path[1] } @{ _get_module_metrics() } or defined $path[2] ) {
 					return;
 				}
+
+				$modes = oct( '100644' );
+
+				# get the data
+				$size = length( _get_module_metric( $incpath, $path[0], $path[1] ) );
 			} else {
 				# a directory, munge the data
 				$size = 0;
@@ -141,19 +156,14 @@ sub manage_modules {
 			return;
 		}
 
-		# what are we opening?
-		if ( $path[1] eq 'version' ) {
-			my $module = join( '::', split( '-', $path[0] ) );
-			my $version = eval "$module->VERSION";
-			if ( ! defined $version ) {
-				$version = 'UNDEF';
-			}
-			return \$version;
-		} elsif ( $path[1] eq 'path' ) {
-			return \$INC{ $incpath };
-		} else {
+		# valid filename?
+		if ( ! grep { $_ eq $path[1] } @{ _get_module_metrics() } or defined $path[2] ) {
 			return;
 		}
+
+		# get the metric!
+		my $data = _get_module_metric( $incpath, $path[0], $path[1] );
+		return \$data;
 	}
 }
 
@@ -191,7 +201,11 @@ sub manage_env {
 		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 	} elsif ( $type eq 'open' ) {
 		# return a scalar ref
-		return \$ENV{ $path[0] };
+		if ( exists $ENV{ $path[0] } ) {
+			return \$ENV{ $path[0] };
+		} else {
+			return;
+		}
 	}
 }
 

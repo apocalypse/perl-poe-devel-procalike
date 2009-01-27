@@ -29,6 +29,54 @@ my %fs = (
 	# start with no modules loaded
 );
 
+# helper sub to munge package names
+sub _mungepkg {
+	my( $self, $pkg ) = @_;
+
+	# change :: to -
+	$pkg =~ s|::|-|g;
+
+	# lowercase everything
+	$pkg = lc( $pkg );
+
+	# all done!
+	return $pkg;
+}
+
+# adds a package
+sub register {
+	my( $self, $pkg ) = @_;
+
+	# munge the package name to our "standard" format
+	$pkg = $self->_mungepkg( $pkg );
+
+	# sanity check
+	if ( exists $fs{ $pkg } ) {
+		return;
+	}
+
+	# yay, we can add the package!
+	$fs{ $pkg } = 1;
+	return 1;
+}
+
+# removes a package
+sub unregister {
+	my( $self, $pkg ) = @_;
+
+	# munge the package name to our "standard" format
+	$pkg = $self->_mungepkg( $pkg );
+
+	# sanity check
+	if ( ! exists $fs{ $pkg } ) {
+		return;
+	}
+
+	# yay, we can remove the package!
+	delete $fs{ $pkg };
+	return 1;
+}
+
 # we cheat here and not implement a lot of stuff because we know the FUSE api never calls the "extra" APIs
 # that ::Async provides. Furthermore, this is a read-only filesystem so we can skip even more APIs :)
 
@@ -45,14 +93,8 @@ my %fs = (
 sub _readdir {
 	my( $self, $path ) = @_;
 
-	if ( $path eq File::Spec->rootdir() ) {
-		return [ keys %fs ];
-	} else {
-		# sanitize the path
-		my @dirs = File::Spec->splitdir( $path );
-		shift( @dirs ); # get rid of the root entry which is always '' for me
-		return $fs{ $dirs[0] }->( 'readdir', @dirs[ 1 .. $#dirs ] );
-	}
+	# return our modules
+	return [ keys %fs ];
 }
 
 # _rmdir
@@ -76,43 +118,17 @@ sub _readdir {
 sub _stat {
 	my( $self, $path ) = @_;
 
-	# stating the root?
-	if ( $path eq File::Spec->rootdir() ) {
-		my ($atime, $ctime, $mtime, $size, $modes);
-		$atime = $ctime = $mtime = time();
-		my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
-		$size = 0;
-		$modes = oct( '040755' );
+	# return generic info
+	my ($atime, $ctime, $mtime, $size, $modes);
+	$atime = $ctime = $mtime = time();
+	my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
+	$size = 0;
+	$modes = oct( '040755' );
 
-		# count subdirs
-		$nlink = 2 + grep { ref $fs{ $_ } } keys %fs;
+	# count subdirs
+	$nlink = 2 + scalar keys %fs;
 
-		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
-	}
-
-	# sanitize the path
-	my @dirs = File::Spec->splitdir( $path );
-	shift( @dirs ); # get rid of the root entry which is always '' for me
-	if ( exists $fs{ $dirs[0] } ) {
-		# directory or file?
-		if ( ref $fs{ $dirs[0] } ) {
-			# trying to stat the dir or the subpath?
-			return $fs{ $dirs[0] }->( 'stat', @dirs[ 1 .. $#dirs ] );
-		} else {
-			# arg, stat is a finicky beast!
-			my $size = length( $fs{ $dirs[0] } );
-			my $modes = oct( '100644' );
-
-			my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
-			my ($atime, $ctime, $mtime);
-			$atime = $ctime = $mtime = time();
-
-			# finally, return the darn data!
-			return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
-		}
-	} else {
-		return;
-	}
+	return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 }
 
 # _write
@@ -120,20 +136,8 @@ sub _stat {
 sub _open {
 	my( $self, $path ) = @_;
 
-	# sanitize the path
-	my @dirs = File::Spec->splitdir( $path );
-	shift( @dirs ); # get rid of the root entry which is always '' for me
-	if ( exists $fs{ $dirs[0] } ) {
-		# directory or file?
-		if ( ref $fs{ $dirs[0] } ) {
-			return $fs{ $dirs[0] }->( 'open', @dirs[ 1 .. $#dirs ] );
-		} else {
-			# return a scalar ref
-			return \$fs{ $dirs[0] };
-		}
-	} else {
-		return;
-	}
+	# we don't have anything to open!
+	return;
 }
 
 1;
@@ -153,7 +157,7 @@ Please do not use this module directly.
 
 =head1 DESCRIPTION
 
-This module is responsible for exporting the PoCo module data in ProcAlike.
+This module is responsible for managing the PoCo module data in ProcAlike.
 
 =head1 EXPORT
 

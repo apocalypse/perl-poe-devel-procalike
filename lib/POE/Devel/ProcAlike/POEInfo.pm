@@ -28,6 +28,11 @@ sub new {
 	eval { $have_eventprofile = POE::Kernel::TRACE_PROFILE() };
 	if ( $@ ) {
 		$have_eventprofile = 0;
+	} else {
+		# do we have a new-enough POE to introspect the profile data?
+		if ( ! $poe_kernel->can( 'stat_getprofile' ) ) {
+			$have_eventprofile = 0;
+		}
 	}
 
 	# make sure we set a readonly filesystem!
@@ -155,8 +160,18 @@ sub _get_statistics_metric {
 
 	# what metric?
 	if ( $metric eq 'event_profile' ) {
-		# FIXME need to release POE with the patch :)
-		return "\n";
+		my %profile = $poe_kernel->stat_getprofile();
+
+		# do we have stats?
+		if ( keys %profile == 0 ) {
+			return "\n";
+		}
+
+		my $data = '';
+		foreach my $p ( keys %profile ) {
+			$data .= $profile{ $p } . ":$p\n";
+		}
+		return $data;
 	} else {
 		my %average = $poe_kernel->stat_getdata();
 

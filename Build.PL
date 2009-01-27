@@ -25,13 +25,14 @@ my $build = Module::Build->new(
 
 	'requires'		=> {
 		# POE Stuff
-		'POE'				=> 0,
+		'POE'				=> '1.003',	# require latest for sanity
 		'POE::Session::AttributeBased'	=> 0,
 		'POE::API::Peek'		=> 0,
 
 		# our FUSE stuff
-		'POE::Component::Fuse'			=> '0.02',
-		'POE::Component::AIO'			=> 0,
+		'Fuse'				=> '0.09',
+		'POE::Component::Fuse'		=> '0.02',
+		'POE::Component::AIO'		=> 0,
 
 		# the FsV objects
 		'Filesys::Virtual::Async::inMemory'	=> 0,

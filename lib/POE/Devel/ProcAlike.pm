@@ -163,6 +163,8 @@ sub _start : State {
 	POE::Component::Fuse->spawn(
 		'umount'	=> 1,
 		'mkdir'		=> 1,
+		'mount'		=> "/tmp/poefuse_$$",
+		'rmdir'		=> 1,
 		( defined $_[HEAP]->{'FUSEOPTS'} ? %{ $_[HEAP]->{'FUSEOPTS'} } : () ),
 
 		# make sure the user cannot override those options
@@ -198,6 +200,70 @@ sub fuse_CLOSED : State {
 	$_[KERNEL]->yield( 'shutdown' );
 
 	return;
+}
+
+# adds a poco to the fs
+sub register : State {
+	my $fsv = $_[ARG0];
+
+	# determine caller info
+	my $module = ( caller(4) )[0];
+	if ( $module eq 'POE::Kernel' ) {
+		# we were not dispatched via call(), complain!
+		warn "Registering a module must be done via call() not post()";
+		return;
+	}
+
+	# Weed out modules that we know is unable to register
+	if ( $module eq 'main' ) {
+		warn "Unable to register from package 'main' because it is ambiguous, please do so from a proper package";
+		return;
+	}
+
+	# is the fsv a valid object?
+	if ( ! defined $fsv or ! ref $fsv or ! $fsv->isa( 'Filesys::Virtual::Async' ) ) {
+		warn "The FsV object is not a valid subclass of Filesys::Virtual::Async";
+		return;
+	}
+
+	# Try to register the module!
+	my $result = $_[HEAP]->{'MODULEFS'}->register( $module );
+	if ( defined $result ) {
+		# successfully registered, add it to the dispatcher!
+		$_[HEAP]->{'DISPATCHER'}->mount( File::Spec->catdir( File::Spec->rootdir(), 'modules', $result ), $fsv );
+		return 1;
+	} else {
+		warn "The package '$module' is already registered";
+		return;
+	}
+}
+
+# removes a poco from the fs
+sub unregister : State {
+	# determine caller info
+	my $module = ( caller(4) )[0];
+	if ( $module eq 'POE::Kernel' ) {
+		# we were not dispatched via call(), complain!
+		warn "Unregistering a module must be done via call() not post()";
+		return;
+	}
+
+	# Weed out modules that we know is unable to register
+	if ( $module eq 'main' ) {
+		warn "Unable to register from package 'main' because it is ambiguous, please do so from a proper package";
+		return;
+	}
+
+	# Try to register the module!
+	my $result = $_[HEAP]->{'MODULEFS'}->unregister( $module );
+	if ( defined $result ) {
+		# successfully unregistered, remove it from the dispatcher!
+		$_[HEAP]->{'DISPATCHER'}->umount( File::Spec->catdir( File::Spec->rootdir(), 'modules', $result ) );
+		return 1;
+	} else {
+		warn "The package '$module' was never registered";
+		return;
+	}
 }
 
 1;
@@ -257,7 +323,11 @@ This constructor accepts either a hashref or a hash, valid options are:
 =head3 fuseopts
 
 This is a hashref of options to pass to the underlying FUSE component, L<POE::Component::Fuse>'s spawn() method. Useful
-to change the default mountpoint, for example.
+to change the default mountpoint, for example. Setting the mountpoint is a MUST if you have multiple scripts running
+and want to use this.
+
+The default fuseopts is to enable: umount, mkdir, rmdir, and mountpoint of "/tmp/poefuse_$$". You cannot override those
+options: alias, vfilesys, and session.
 
 The default is: undef
 
@@ -308,9 +378,11 @@ object and give it to ProcAlike. Here's how I would do the logic:
 
 	my $ses = $_[KERNEL]->alias_resolve( 'poe-devel-procalike' );
 	if ( $ses ) {
-		require My::FsV;
+		require My::FsV; # a subclass of Filesys::Virtual::Async
 		my $fsv = My::FsV->new( ... );
-		$_[KERNEL]->call( $ses, 'register', $fsv );
+		if ( ! $_[KERNEL]->call( $ses, 'register', $fsv ) ) {
+			warn "unable to register!";
+		}
 	}
 
 Keep in mind that the alias is static, and you should be executing this code in the "preferred" package. What I mean
@@ -326,6 +398,12 @@ Furthermore, ProcAlike only allows each package to register once, so you have to
 and use that if your PoCo has been spawned N times. The reasoning behind this is to have a "uniform" filesystem
 that would be valid across multiple invocations. If we allowed module authors to register any name, then we would
 end up with possible collisions and wacky schemes like "$pkg$ses->ID" as the name...
+
+Also, here's a tip: you don't have to implement the entire L<Filesys::Virtual::Async> API because FUSE doesn't use
+them all! The ones you would have to do is: rmtree, scandir, move, copy, load, readdir, rmdir, mkdir, rename, mknod,
+unlink, chmod, truncate, chown, utime, stat, write, open. To save even more time, you can subclass the
+L<Filesys::Virtual::Async::inMemory> module and set readonly to true. Then you would have to subclass only those
+methods: readdir, stat, open.
 
 =head2 TODO
 
@@ -347,9 +425,15 @@ like PoCo-DebugShell, and we could expand it to accept zany commands :)
 I talked with some people, and this problem is much more complex than you would think it is. If somebody could
 let me know of a snippet that measures this, I would love to include it in the perl output!
 
+=item * POE::API::Peek crashes
+
+There are some functions that causes segfaults for me! They are: session_memory_size, signals_watched_by_session, and
+kernel_memory_size. If the situation improves, I would love to reinstate them in ProcAlike and expose the data, so
+please let me know if it does.
+
 =item * more stats
 
-More stats is always welcome! If you have any ideas, please drop me a line.
+More stats are always welcome! If you have any ideas, please drop me a line.
 
 =back
 

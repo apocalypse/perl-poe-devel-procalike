@@ -17,12 +17,17 @@ use POE;
 use POE::API::Peek;
 my $api = POE::API::Peek->new();
 my $have_stats = 0;
+my $have_eventprofile = 0;
 
 sub new {
 	# do we have stats available?
-	eval { $have_stats = $poe_kernel->stat_getdata() };
-	if ( ! $@ and defined $have_stats ) {
-		$have_stats = 1;
+	eval { $have_stats = POE::Kernel::TRACE_STATISTICS() };
+	if ( $@ ) {
+		$have_stats = 0;
+	}
+	eval { $have_eventprofile = POE::Kernel::TRACE_PROFILE() };
+	if ( $@ ) {
+		$have_eventprofile = 0;
 	}
 
 	# make sure we set a readonly filesystem!
@@ -108,10 +113,10 @@ sub new {
 #
 #			heap			# Data::Dumper( $session->get_heap() )
 my %fs = (
-	'id'			=> $poe_kernel->ID,
+	'id'			=> $poe_kernel->ID . "\n",
 	'is_running'		=> [ $api, 'is_kernel_running' ],
-	'which_loop'		=> $poe_kernel->poe_kernel_loop,
-	'safe_signals'		=> join( "\n", $api->get_safe_signals() ),
+	'which_loop'		=> $poe_kernel->poe_kernel_loop . "\n",
+	'safe_signals'		=> join( "\n", $api->get_safe_signals() ) . "\n",
 	'active_session'	=> [ $poe_kernel, 'get_active_session', sub { $_[0]->ID } ],
 	'active_event'		=> [ $poe_kernel, 'get_active_event' ],
 #	'memory_size'		=> [ $api, 'kernel_memory_size' ],
@@ -130,33 +135,55 @@ my %fs = (
 
 # helper sub to keep track of stat variables
 sub _get_statistics_metrics {
-	return [ qw( blocked blocked_seconds idle_seconds interval total_duration user_events user_seconds
-		avg_blocked avg_blocked_seconds avg_idle_seconds avg_total_duration avg_user_events avg_user_seconds
-		derived_idle derived_user derived_blocked derived_userload
-	) ];
+	my @stats;
+
+	# do we have event profiling?
+	if ( $have_eventprofile ) {
+		push( @stats, 'event_profile' );
+	}
+	if ( $have_stats ) {
+		push( @stats, qw( blocked blocked_seconds idle_seconds interval total_duration user_events user_seconds
+			avg_blocked avg_blocked_seconds avg_idle_seconds avg_user_events avg_user_seconds
+			derived_idle derived_user derived_blocked derived_userload
+		) );
+	}
+
+	return \@stats;
 }
 sub _get_statistics_metric {
 	my $metric = shift;
-	my %average = $poe_kernel->stat_getdata();
 
-	# derived require calculations
-	if ( $metric =~ /^derived/ ) {
-		# Division by zero sucks.
-		$average{'interval'}	||= 1;
-		$average{'user_events'}	||= 1;
-
-		if ( $metric eq 'derived_idle' ) {
-			return sprintf( "%9.1f%%", 100 * $average{'avg_idle_seconds'} / $average{'interval'} );
-		} elsif ( $metric eq 'derived_user' ) {
-			return sprintf( "%9.1f%%", 100 * $average{'avg_user_seconds'} / $average{'interval'} );
-		} elsif ( $metric eq 'derived_blocked' ) {
-			return sprintf( "%9.1f%%", 100 * $average{'avg_blocked'} / $average{'user_events'} );
-		} elsif ( $metric eq 'derived_userload' ) {
-			return sprintf( "%9.1f%%", 100 * $average{'avg_user_events'} / $average{'interval'} );
-		}
+	# what metric?
+	if ( $metric eq 'event_profile' ) {
+		# FIXME need to release POE with the patch :)
+		return "\n";
 	} else {
-		# simple hash access
-		return $average{ $metric };
+		my %average = $poe_kernel->stat_getdata();
+
+		# do we have stats?
+		if ( keys %average == 0 ) {
+			return "\n";
+		}
+
+		# derived require calculations
+		if ( $metric =~ /^derived/ ) {
+			# Division by zero sucks.
+			$average{'interval'}	||= 1;
+			$average{'user_events'}	||= 1;
+
+			if ( $metric eq 'derived_idle' ) {
+				return sprintf( "%2.1f%%\n", 100 * $average{'avg_idle_seconds'} / $average{'interval'} );
+			} elsif ( $metric eq 'derived_user' ) {
+				return sprintf( "%2.1f%%\n", 100 * $average{'avg_user_seconds'} / $average{'interval'} );
+			} elsif ( $metric eq 'derived_blocked' ) {
+				return sprintf( "%2.1f%%\n", 100 * $average{'avg_blocked'} / $average{'user_events'} );
+			} elsif ( $metric eq 'derived_userload' ) {
+				return sprintf( "%2.1f%%\n", 100 * $average{'avg_user_events'} / $average{'interval'} );
+			}
+		} else {
+			# simple hash access
+			return $average{ $metric } . "\n";
+		}
 	}
 }
 
@@ -165,12 +192,7 @@ sub manage_statistics {
 
 	# what's the operation?
 	if ( $type eq 'readdir' ) {
-		# do we have stats?
-		if ( $have_stats ) {
-			return _get_statistics_metrics();
-		} else {
-			return [];
-		}
+		return _get_statistics_metrics();
 	} elsif ( $type eq 'stat' ) {
 		# set some default data
 		my ($atime, $ctime, $mtime, $size, $modes);
@@ -179,23 +201,13 @@ sub manage_statistics {
 
 		# trying to stat the dir or stuff inside it?
 		if ( defined $path[0] ) {
-			# do we have stats?
-			if ( ! $have_stats ) {
-				return;
-			}
-
 			# is it a valid stat metric?
 			if ( ! grep { $_ eq $path[0] } @{ _get_statistics_metrics() } or defined $path[1] ) {
 				return;
 			}
 
 			# a file, munge the data
-			$size = _get_statistics_metric( $path[0] );
-			if ( defined $size ) {
-				$size = length( $size );
-			} else {
-				$size = 0;
-			}
+			$size = length( _get_statistics_metric( $path[0] ) );
 			$modes = oct( '100644' );
 		} else {
 			# a directory, munge the data
@@ -207,11 +219,6 @@ sub manage_statistics {
 		# finally, return the darn data!
 		return( [ $dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ] );
 	} elsif ( $type eq 'open' ) {
-		# do we have stats?
-		if ( ! $have_stats ) {
-			return;
-		}
-
 		# is it a valid stat metric?
 		if ( ! grep { $_ eq $path[0] } @{ _get_statistics_metrics() } or defined $path[1] ) {
 			return;
@@ -234,12 +241,12 @@ sub _get_queue_metric {
 	# some metrics require manipulation
 	if ( $metric eq 'source' or $metric eq 'destination' ) {
 		if ( ref $queuedata->{ $metric } ) {
-			return $queuedata->{ $metric }->ID;
+			return $queuedata->{ $metric }->ID . "\n";
 		}
 	}
 
 	# simple hash access
-	return $queuedata->{ $metric };
+	return $queuedata->{ $metric } . "\n";
 }
 
 sub manage_queue {
@@ -330,27 +337,32 @@ sub _get_sessions_metric {
 
 	# determine what to do
 	if ( $metric eq 'id' ) {
-		return $session->ID;
+		return $session->ID . "\n";
 	} elsif ( $metric eq 'type' ) {
-		return ref( $session );
+		return ref( $session ) . "\n";
 	} elsif ( $metric eq 'memory_size' ) {
-		return $api->session_memory_size( $session );
+		return $api->session_memory_size( $session ) . "\n";
 	} elsif ( $metric eq 'extref_count' ) {
-		return $api->get_session_extref_count( $session );
+		return $api->get_session_extref_count( $session ) . "\n";
 	} elsif ( $metric eq 'handle_count' ) {
-		return $api->session_handle_count( $session );
+		return $api->session_handle_count( $session ) . "\n";
 	} elsif ( $metric eq 'events_to' ) {
-		return $api->event_count_to( $session );
+		return $api->event_count_to( $session ) . "\n";
 	} elsif ( $metric eq 'events_from' ) {
-		return $api->event_count_from( $session );
+		return $api->event_count_from( $session ) . "\n";
 	} elsif ( $metric eq 'watched_signals' ) {
-		return join( "\n", $api->signals_watched_by_session( $session ) );
+		return join( "\n", $api->signals_watched_by_session( $session ) ) . "\n";
 	} elsif ( $metric eq 'events' ) {
-		return join( "\n", $api->session_event_list( $session ) );
+		return join( "\n", $api->session_event_list( $session ) ) . "\n";
 	} elsif ( $metric eq 'aliases' ) {
-		return join( "\n", $api->session_alias_list( $session ) );
+		return join( "\n", $api->session_alias_list( $session ) ) . "\n";
 	} elsif ( $metric eq 'heap' ) {
 		require Data::Dumper;
+
+		# make sure we have "consistent" data
+		local $Data::Dumper::Terse = 1;
+		local $Data::Dumper::Sortkeys = 1;
+
 		return Data::Dumper::Dumper( $session->get_heap() );
 	} else {
 		die "unknown sessions metric: $metric\n";
@@ -489,7 +501,7 @@ sub _stat_arraymode {
 	}
 
 	# all done!
-	return $data;
+	return $data . "\n";
 }
 
 sub _stat {

@@ -46,13 +46,13 @@ sub new {
 #			version		# $module->VERSION ||= 'UNDEF'
 #			path		# module's path in %INC
 my %fs = (
-	'binary'	=> $^X,
-	'version'	=> "$^V",
-	'pid'		=> $$,
-	'script'	=> $0,
-	'osname'	=> $^O,
-	'starttime'	=> $^T,
-	'inc'		=> join( "\n", @INC ),
+	'binary'	=> $^X . "\n",
+	'version'	=> "$^V\n",
+	'pid'		=> $$ . "\n",
+	'script'	=> $0 . "\n",
+	'osname'	=> $^O . "\n",
+	'starttime'	=> $^T . "\n",
+	'inc'		=> join( "\n", @INC ) . "\n",
 
 	'env'		=> \&manage_env,
 
@@ -63,7 +63,7 @@ my %fs = (
 sub _get_loadedmodules {
 	my @list = map { my @s = File::Spec->splitdir( $_ ); my $p = join( '-', @s ); $p }
 		map { $_ =~ s/\.pm$//; $_ }
-		grep { $_ !~ /(?:al|ix)$/ } keys %INC; # remove /usr/lib/perl/5.10/auto/POSIX/autosplit.ix
+		grep { $_ !~ /(?:al|ix)$/ } keys %INC;
 	return \@list;
 }
 
@@ -81,12 +81,12 @@ sub _get_module_metric {
 		my $size = join( '::', split( '-', $module ) );
 		$size = eval "$size->VERSION";
 		if ( defined $size ) {
-			return $size;
+			return $size . "\n";
 		} else {
-			return 'UNDEF';
+			return 'UNDEF' . "\n";
 		}
 	} elsif ( $metric eq 'path' ) {
-		return $INC{ $incpath };
+		return $INC{ $incpath } . "\n";
 	} else {
 		die "unknown module metric: $metric\n";
 	}
@@ -188,7 +188,7 @@ sub manage_env {
 			}
 
 			# a file, munge the data
-			$size = length( $ENV{ $path[0] } );
+			$size = length( $ENV{ $path[0] } . "\n" );
 			$modes = oct( '100644' );
 		} else {
 			# a directory, munge the data
@@ -202,7 +202,8 @@ sub manage_env {
 	} elsif ( $type eq 'open' ) {
 		# return a scalar ref
 		if ( exists $ENV{ $path[0] } ) {
-			return \$ENV{ $path[0] };
+			my $data = $ENV{ $path[0] } . "\n";
+			return \$data;
 		} else {
 			return;
 		}

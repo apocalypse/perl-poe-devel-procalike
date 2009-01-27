@@ -168,6 +168,7 @@ sub _start : State {
 		# make sure the user cannot override those options
 		'alias'		=> $_[HEAP]->{'ALIAS'} . '-fuse',
 		'vfilesys'	=> $_[HEAP]->{'DISPATCHER'},
+		'session'	=> $_[SESSION]->ID,
 	);
 
 	return;
@@ -188,6 +189,13 @@ sub shutdown : State {
 
 	# tell poco-fuse to shutdown
 	$_[KERNEL]->post( $_[HEAP]->{'ALIAS'} . '-fuse', 'shutdown' );
+
+	return;
+}
+
+# handles poco-fuse shutting down
+sub fuse_CLOSED : State {
+	$_[KERNEL]->yield( 'shutdown' );
 
 	return;
 }

@@ -61,9 +61,12 @@ my %fs = (
 
 # helper to get loaded modules
 sub _get_loadedmodules {
-	my @list = map { my @s = File::Spec->splitdir( $_ ); my $p = join( '-', @s ); $p }
-		map { $_ =~ s/\.pm$//; $_ }
-		grep { $_ !~ /(?:al|ix)$/ } keys %INC;
+	my @list = grep { $_ !~ /(?:al|ix)$/ } keys %INC;	# remove those annoying non-module files
+	for ( @list ) {
+		s/\.pm$//;					# remove trailing .pm
+		$_ = join( '-', File::Spec->splitdir( $_ ) );	# convert "/" into "-" ( portably )
+	}
+
 	return \@list;
 }
 
@@ -79,7 +82,11 @@ sub _get_module_metric {
 	# what metric?
 	if ( $metric eq 'version' ) {
 		my $size = join( '::', split( '-', $module ) );
+
+		## no critic
 		$size = eval "$size->VERSION";
+		## use critic
+
 		if ( defined $size ) {
 			return $size . "\n";
 		} else {

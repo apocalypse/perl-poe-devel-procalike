@@ -375,8 +375,10 @@ sub _get_sessions_metric {
 		require Data::Dumper;
 
 		# make sure we have "consistent" data
+		no warnings;	# shutup "possible used only once" warning!
 		local $Data::Dumper::Terse = 1;
 		local $Data::Dumper::Sortkeys = 1;
+		use warnings;
 
 		return Data::Dumper::Dumper( $session->get_heap() );
 	} else {

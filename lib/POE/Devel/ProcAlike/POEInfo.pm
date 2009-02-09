@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # Set our superclass
 use base 'Filesys::Virtual::Async::inMemory';
@@ -83,6 +83,8 @@ sub new {
 #		derived_blocked
 #		derived_userload
 #
+#		event_profile
+#
 #	/eventqueue
 #		# a place for the event queue data ( basically a dump of POE::Queue::Array ) - from $api->event_queue_dump()
 #
@@ -111,6 +113,7 @@ sub new {
 #
 #			events_to		# $api->event_count_to( $session )
 #			events_from		# $api->event_count_from( $session )
+#			event_profile		# $kernel->stat_getprofile( $session )
 #
 #			watched_signals		# $api->signals_watched_by_session( $session )
 #			events			# $api->session_event_list( $session )
@@ -341,10 +344,19 @@ sub manage_queue {
 
 # helper sub to simplify session item processing
 sub _get_sessions_metrics {
+	my @stats;
+
 	# removed memory_size, watched_signals due to complications
-	return [ qw( id type extref_count handle_count events_to events_from
+	push( @stats, qw( id type extref_count handle_count events_to events_from
 		events aliases heap
-	) ];
+	) );
+
+	# do we have profiling?
+	if ( $have_eventprofile ) {
+		push( @stats, 'event_profile' );
+	}
+
+	return \@stats;
 }
 sub _get_sessions_metric {
 	my $session = shift;
@@ -381,6 +393,19 @@ sub _get_sessions_metric {
 		use warnings;
 
 		return Data::Dumper::Dumper( $session->get_heap() );
+	} elsif ( $metric eq 'event_profile' ) {
+		my %profile = $poe_kernel->stat_getprofile( $session );
+
+		# do we have stats?
+		if ( keys %profile == 0 ) {
+			return "\n";
+		}
+
+		my $data = '';
+		foreach my $p ( keys %profile ) {
+			$data .= $profile{ $p } . ":$p\n";
+		}
+		return $data;
 	} else {
 		die "unknown sessions metric: $metric\n";
 	}

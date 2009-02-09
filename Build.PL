@@ -1,4 +1,5 @@
 # Build.PL
+use strict; use warnings;
 use Module::Build;
 
 my $build = Module::Build->new(
@@ -16,12 +17,7 @@ my $build = Module::Build->new(
 
 	'test_files'		=> 't/*.t',
 
-	'add_to_cleanup'	=> [ 'META.yml', 'Makefile.PL', 'README' ],	# automatically generated
-
-	'build_requires'	=> {
-		# Test stuff
-		'Test::More'			=> '0.86',	# require latest for note() support in t/a_is_prereq_outdated.t
-	},
+	'add_to_cleanup'	=> [ 'META.yml', 'Makefile.PL', 'README', 'Makefile' ],	# automatically generated
 
 	'requires'		=> {
 		# POE Stuff
@@ -37,28 +33,10 @@ my $build = Module::Build->new(
 		# the FsV objects
 		'Filesys::Virtual::Async::inMemory'	=> 0,
 		'Filesys::Virtual::Async::Dispatcher'	=> 0,
-	},
 
-	# FIXME wishlist...
-#	'test_requires'		=> {
-#		# Test stuff
-#		'Test::Compile'		=> 0,
-#		'Test::Perl::Critic'	=> 0,
-#		'Test::Dependencies'	=> 0,
-#		'Test::Distribution'	=> 0,
-#		'Test::Fixme'		=> 0,
-#		'Test::HasVersion'	=> 0,
-#		'Test::Kwalitee'	=> 0,
-#		'Test::CheckManifest'	=> 0,
-#		'Test::MinimumVersion'	=> 0,
-#		'Test::Pod::Coverage'	=> 0,
-#		'Test::Spelling'	=> 0,
-#		'Test::Pod'		=> 0,
-#		'Test::Prereq'		=> 0,
-#		'Test::Strict'		=> 0,
-#		'Test::UseAllModules'	=> 0,
-#		'Test::YAML::Meta'	=> 0,
-#	},
+		# our minimum perl version
+		'perl'				=> '5.006',
+	},
 );
 
 # all done!

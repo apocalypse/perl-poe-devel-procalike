@@ -26,9 +26,7 @@ my $build = Module::Build->new(
 		'POE::API::Peek'		=> 0,
 
 		# our FUSE stuff
-		'Fuse'				=> '0.09',
-		'POE::Component::Fuse'		=> '0.02',
-		'POE::Component::AIO'		=> 0,
+		'POE::Component::Fuse'		=> '0.05',
 
 		# the FsV objects
 		'Filesys::Virtual::Async::inMemory'	=> 0,

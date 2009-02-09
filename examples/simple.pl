@@ -15,10 +15,14 @@ POE::Session->create(
 		'_start'	=> sub {
 			$_[KERNEL]->alias_set( 'foo' );
 			$_[KERNEL]->yield( 'timer' );
+			$_[KERNEL]->sig( 'INT' => 'int_handler' );
 		},
 		'timer'		=> sub {
 			$_[KERNEL]->delay_set( 'timer' => 60 );
-		}
+		},
+		'int_handler'	=> sub {
+			$_[KERNEL]->post( 'poe-devel-procalike', 'shutdown' );
+		},
 	},
 	'heap'		=> {
 		'fakedata'	=> 1,
